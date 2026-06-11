@@ -42,7 +42,11 @@ class StateManager:
         return self._states[user_id]
 
     def set_state(self, user_id: int, state: State, data: Dict[str, Any] = None):
-        self._states[user_id] = UserState(state=state, data=data or {})
+        if data is None:
+            existing = self.get_state(user_id)
+            self._states[user_id] = UserState(state=state, data=existing.data)
+        else:
+            self._states[user_id] = UserState(state=state, data=data)
 
     def clear_state(self, user_id: int):
         if user_id in self._states:
