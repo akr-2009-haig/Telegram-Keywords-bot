@@ -25,6 +25,11 @@ logging.basicConfig(
         logging.FileHandler('bot.log', encoding='utf-8')
     ]
 )
+# Suppress noisy/sensitive loggers
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+logging.getLogger("telegram.ext.Application").setLevel(logging.WARNING)
+logging.getLogger("telethon").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 async def main():
