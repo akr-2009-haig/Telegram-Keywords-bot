@@ -13,7 +13,8 @@ from telethon.tl.functions.channels import JoinChannelRequest, LeaveChannelReque
 from telethon.tl.functions.messages import ImportChatInviteRequest
 from telethon.errors import (
     FloodWaitError, InviteHashExpiredError, UserAlreadyParticipantError,
-    ChannelInvalidError, ChannelPrivateError, SessionPasswordNeededError
+    ChannelInvalidError, ChannelPrivateError, SessionPasswordNeededError,
+    PhoneCodeExpiredError, PhoneCodeInvalidError
 )
 
 logger = logging.getLogger(__name__)
@@ -179,6 +180,25 @@ class UserBotManager:
         except SessionPasswordNeededError:
             # Do NOT clear state — phone is still needed by verify_password
             return {"status": "2fa_required", "error": "Two-step verification is enabled"}
+
+        except (PhoneCodeExpiredError, PhoneCodeInvalidError) as exc:
+            phone = self._phone
+            logger.warning(f"Code expired/invalid for {phone}, resending automatically: {exc}")
+            try:
+                await self.create_client(phone=phone)
+                resend_result = await self.send_code(phone)
+                if resend_result.get("status") == "code_sent":
+                    return {
+                        "status": "code_resent",
+                        "phone": phone,
+                        "phone_code_hash": resend_result["phone_code_hash"]
+                    }
+            except Exception as resend_exc:
+                logger.error(f"Auto-resend failed: {resend_exc}")
+            return {
+                "status": "code_expired",
+                "error": "انتهت صلاحية الكود. أرسل /start لإعادة المحاولة."
+            }
 
         except Exception as exc:
             logger.error(f"Verify code error: {exc}")

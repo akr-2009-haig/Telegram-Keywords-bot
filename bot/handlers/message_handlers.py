@@ -179,6 +179,27 @@ class MessageHandlers:
                         parse_mode="Markdown"
                     )
 
+                elif result.get("status") == "code_resent":
+                    phone = result.get("phone", self.state_manager.get_data(update.effective_user.id, "phone"))
+                    self.state_manager.set_data(update.effective_user.id, "phone", phone)
+                    self.state_manager.set_data(update.effective_user.id, "phone_code_hash", result.get("phone_code_hash"))
+                    await update.message.reply_text(
+                        f"⚠️ **انتهت صلاحية الكود السابق**\n\n"
+                        f"✅ تم إرسال **كود جديد** إلى `{phone}`\n\n"
+                        f"أرسل الكود الجديد الآن:",
+                        reply_markup=back_and_home_keyboard("back_start"),
+                        parse_mode="Markdown"
+                    )
+
+                elif result.get("status") == "code_expired":
+                    self.state_manager.clear_state(update.effective_user.id)
+                    await update.message.reply_text(
+                        "❌ **انتهت صلاحية الكود**\n\n"
+                        "أرسل /start لإعادة المحاولة.",
+                        reply_markup=back_and_home_keyboard("back_start"),
+                        parse_mode="Markdown"
+                    )
+
                 else:
                     await update.message.reply_text(
                         f"❌ **خطأ في التحقق:** {result.get('error', 'Unknown error')}\n\n"
