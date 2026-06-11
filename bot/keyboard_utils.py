@@ -75,6 +75,7 @@ def userbot_menu_keyboard():
     buttons = [
         ("🔄 إعادة تشغيل", "restart_userbot"),
         ("🔀 تغيير الحساب", "change_userbot"),
+        ("📡 مراقبة كل القروبات", "monitor_all"),
         ("❌ فصل الحساب", "disconnect_userbot"),
         ("◀️ رجوع", "back_main")
     ]

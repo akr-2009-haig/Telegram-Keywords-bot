@@ -170,6 +170,8 @@ class CallbackHandlers:
             await self.restart_userbot(update, context)
         elif data == "change_userbot":
             await self.change_userbot(update, context)
+        elif data == "monitor_all":
+            await self.monitor_all(update, context)
         elif data == "disconnect_userbot":
             await self.disconnect_userbot(update, context)
         elif data == "confirm_disconnect":
@@ -975,6 +977,46 @@ class CallbackHandlers:
         keyboard = create_keyboard([
             ("📱 ربط حساب جديد", "setup_phone"),
             ("◀️ رجوع", "back_main")
+        ], row_width=2)
+        if update.callback_query:
+            await update.callback_query.edit_message_text(text, reply_markup=keyboard, parse_mode="Markdown")
+
+    async def monitor_all(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Start monitoring ALL groups/channels the account is member of.
+
+        Syncs all account dialogs to the database (adds new ones),
+        then registers a global handler that passes every message
+        through the normal keyword-filtering pipeline in bot_manager.
+        """
+        if not self.bot_manager.userbot or not self.bot_manager.userbot.is_connected:
+            if update.callback_query:
+                await update.callback_query.answer(
+                    "❌ الحساب غير متصل. سجّل الدخول أولاً.",
+                    show_alert=True
+                )
+            return
+
+        if update.callback_query:
+            await update.callback_query.edit_message_text(
+                "🔄 **جاري مزامنة جميع القروبات والقنوات...**\n\nقد يستغرق ذلك بضع ثوانٍ.",
+                parse_mode="Markdown"
+            )
+
+        try:
+            discovered = await self.bot_manager.userbot.start_monitoring_all()
+            text = (
+                f"✅ **تم تفعيل مراقبة الكل**\n\n"
+                f"📡 تم اكتشاف **{discovered}** قروب/قناة وإضافتها للقاعدة\n\n"
+                f"سيتم الآن رصد الكلمات المفتاحية في **جميع** القروبات والقنوات "
+                f"التي ينتمي إليها الحساب."
+            )
+        except Exception as exc:
+            logger.error(f"monitor_all error: {exc}")
+            text = f"❌ **خطأ أثناء التفعيل:** {exc}"
+
+        keyboard = create_keyboard([
+            ("📡 القروبات", "menu_groups"),
+            ("◀️ رجوع", "menu_userbot")
         ], row_width=2)
         if update.callback_query:
             await update.callback_query.edit_message_text(text, reply_markup=keyboard, parse_mode="Markdown")
