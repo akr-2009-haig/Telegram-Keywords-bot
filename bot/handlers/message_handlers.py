@@ -3,13 +3,15 @@
 
 import logging
 import re
+from telethon.sessions import StringSession
+
 from telegram import Update
 from telegram.ext import ContextTypes, MessageHandler, filters
 
 from bot.state_manager import State
 from bot.keyboard_utils import (
     main_menu_keyboard, groups_menu_keyboard, keywords_menu_keyboard,
-    back_button, create_keyboard
+    back_button, back_and_home_keyboard, create_keyboard
 )
 from bot.text_utils import (
     code_sent_text, account_linked_text, group_added_text, group_add_failed_text,
@@ -25,8 +27,6 @@ class MessageHandlers:
     def setup(application, db, state_manager, bot_manager):
         """Register message handlers"""
         handlers = MessageHandlers(db, state_manager, bot_manager)
-
-        # Handle text messages
         application.add_handler(
             MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.handle_text)
         )
@@ -43,10 +43,9 @@ class MessageHandlers:
         state = self.state_manager.get_state(user_id)
 
         if state.state == State.IDLE:
-            # No active state - ignore or show help
             await update.message.reply_text(
                 "استخدم /menu للوحة التحكم أو /help للمساعدة",
-                reply_markup=main_menu_keyboard()
+                reply_markup=main_menu_keyboard(self.bot_manager.bot_status)
             )
             return
 
@@ -55,6 +54,9 @@ class MessageHandlers:
 
         elif state.state == State.WAITING_CODE:
             await self._handle_code(update, context, text)
+
+        elif state.state == State.WAITING_2FA_PASSWORD:
+            await self._handle_2fa_password(update, context, text)
 
         elif state.state == State.WAITING_GROUP_LINK:
             await self._handle_group_link(update, context, text)
@@ -74,25 +76,22 @@ class MessageHandlers:
         else:
             await update.message.reply_text(
                 "الأمر غير واضح. استخدم /menu للعودة للوحة التحكم.",
-                reply_markup=main_menu_keyboard()
+                reply_markup=main_menu_keyboard(self.bot_manager.bot_status)
             )
 
     async def _handle_phone(self, update: Update, context: ContextTypes.DEFAULT_TYPE, text: str):
         """Handle phone number input"""
-        # Validate phone format
         phone_pattern = r'^\+[1-9]\d{7,15}$'
         if not re.match(phone_pattern, text):
             await update.message.reply_text(
                 "❌ **رقم غير صحيح**\n\nأرسل الرقم بالصيغة الدولية\nمثال: +966512345678",
-                reply_markup=back_button("back_start"),
+                reply_markup=back_and_home_keyboard("back_start"),
                 parse_mode="Markdown"
             )
             return
 
-        # Store phone
         self.state_manager.set_data(update.effective_user.id, "phone", text)
 
-        # Send code via userbot
         if self.bot_manager.userbot:
             try:
                 await self.bot_manager.userbot.create_client(phone=text)
@@ -104,11 +103,10 @@ class MessageHandlers:
 
                     await update.message.reply_text(
                         code_sent_text(text),
-                        reply_markup=back_button("back_start"),
+                        reply_markup=back_and_home_keyboard("back_start"),
                         parse_mode="Markdown"
                     )
                 elif result.get("status") == "already_authorized":
-                    # Already logged in
                     session_string = StringSession.save(self.bot_manager.userbot.client.session)
                     self.db.save_userbot_session(phone=text, session_string=session_string)
                     self.bot_manager.userbot_status = True
@@ -119,26 +117,24 @@ class MessageHandlers:
                         reply_markup=create_keyboard([("🏠 لوحة التحكم", "menu")], row_width=1),
                         parse_mode="Markdown"
                     )
-
-                    # Start monitoring
                     await self.bot_manager._connect_userbot()
                 else:
                     await update.message.reply_text(
                         f"❌ **خطأ:** {result.get('error', 'Unknown error')}",
-                        reply_markup=back_button("back_start"),
+                        reply_markup=back_and_home_keyboard("back_start"),
                         parse_mode="Markdown"
                     )
             except Exception as e:
                 logger.error(f"Phone verification error: {e}")
                 await update.message.reply_text(
-                    f"❌ **خطأ في إرسال الكود:** {str(e)}\n\nتأكد من صحة API_ID و API_HASH",
-                    reply_markup=back_button("back_start"),
+                    f"❌ **خطأ في إرسال الكود:** {str(e)}\n\nتأكد من صحة API_ID و API_HASH في ملف .env",
+                    reply_markup=back_and_home_keyboard("back_start"),
                     parse_mode="Markdown"
                 )
         else:
             await update.message.reply_text(
                 "❌ **لم يتم إعداد UserBot**\n\nتحقق من إعدادات API_ID و API_HASH في ملف .env",
-                reply_markup=back_button("back_start"),
+                reply_markup=back_and_home_keyboard("back_start"),
                 parse_mode="Markdown"
             )
 
@@ -149,25 +145,21 @@ class MessageHandlers:
         if not phone:
             await update.message.reply_text(
                 "❌ **خطأ: لم يتم العثور على الرقم**\n\nابدأ من جديد بـ /start",
-                reply_markup=main_menu_keyboard(),
+                reply_markup=main_menu_keyboard(self.bot_manager.bot_status),
                 parse_mode="Markdown"
             )
             return
 
-        # Verify code
         if self.bot_manager.userbot:
             try:
                 result = await self.bot_manager.userbot.verify_code(text)
 
                 if result.get("status") == "connected":
-                    # Save session
                     self.db.save_userbot_session(
                         phone=result["phone"],
                         session_string=result["session_string"]
                     )
                     self.bot_manager.userbot_status = True
-
-                    # Clear state
                     self.state_manager.clear_state(update.effective_user.id)
 
                     await update.message.reply_text(
@@ -175,22 +167,70 @@ class MessageHandlers:
                         reply_markup=create_keyboard([("🏠 لوحة التحكم", "menu")], row_width=1),
                         parse_mode="Markdown"
                     )
-
-                    # Start monitoring
                     await self.bot_manager._connect_userbot()
+
+                elif result.get("status") == "2fa_required":
+                    self.state_manager.set_state(update.effective_user.id, State.WAITING_2FA_PASSWORD)
+                    await update.message.reply_text(
+                        "🔐 **التحقق الثنائي مفعّل**\n\n"
+                        "الحساب محمي بكلمة مرور إضافية\n\n"
+                        "أرسل كلمة المرور الآن:",
+                        reply_markup=back_and_home_keyboard("back_start"),
+                        parse_mode="Markdown"
+                    )
+
                 else:
                     await update.message.reply_text(
-                        f"❌ **خطأ في التحقق:** {result.get('error', 'Unknown error')}",
-                        reply_markup=back_button("back_start"),
+                        f"❌ **خطأ في التحقق:** {result.get('error', 'Unknown error')}\n\n"
+                        "أعد إرسال الكود أو ابدأ من جديد بـ /start",
+                        reply_markup=back_and_home_keyboard("back_start"),
                         parse_mode="Markdown"
                     )
             except Exception as e:
                 logger.error(f"Code verification error: {e}")
                 await update.message.reply_text(
                     f"❌ **خطأ:** {str(e)}\n\nأعد إرسال الكود أو ابدأ من جديد بـ /start",
-                    reply_markup=back_button("back_start"),
+                    reply_markup=back_and_home_keyboard("back_start"),
                     parse_mode="Markdown"
                 )
+
+    async def _handle_2fa_password(self, update: Update, context: ContextTypes.DEFAULT_TYPE, text: str):
+        """Handle 2FA password input"""
+        phone = self.state_manager.get_data(update.effective_user.id, "phone")
+
+        if self.bot_manager.userbot:
+            try:
+                result = await self.bot_manager.userbot.verify_password(text)
+
+                if result.get("status") == "connected":
+                    self.db.save_userbot_session(
+                        phone=result["phone"] or phone,
+                        session_string=result["session_string"]
+                    )
+                    self.bot_manager.userbot_status = True
+                    self.state_manager.clear_state(update.effective_user.id)
+
+                    await update.message.reply_text(
+                        account_linked_text(phone or result.get("phone", "")),
+                        reply_markup=create_keyboard([("🏠 لوحة التحكم", "menu")], row_width=1),
+                        parse_mode="Markdown"
+                    )
+                    await self.bot_manager._connect_userbot()
+                else:
+                    await update.message.reply_text(
+                        f"❌ **كلمة مرور غير صحيحة:** {result.get('error', '')}\n\nأعد المحاولة:",
+                        reply_markup=back_and_home_keyboard("back_start"),
+                        parse_mode="Markdown"
+                    )
+            except Exception as e:
+                logger.error(f"2FA error: {e}")
+                await update.message.reply_text(
+                    f"❌ **خطأ في كلمة المرور:** {str(e)}",
+                    reply_markup=back_and_home_keyboard("back_start"),
+                    parse_mode="Markdown"
+                )
+        else:
+            await update.message.reply_text("❌ خطأ داخلي. ابدأ من جديد بـ /start")
 
     async def _handle_group_link(self, update: Update, context: ContextTypes.DEFAULT_TYPE, text: str):
         """Handle group link input"""
@@ -200,19 +240,16 @@ class MessageHandlers:
         failed_groups = []
 
         for link in links:
-            # Extract group info from link
             group_info = self._parse_group_link(link)
 
             if not group_info:
                 failed_groups.append((link, "رابط غير صحيح"))
                 continue
 
-            # Try to join via userbot
             if self.bot_manager.userbot and self.bot_manager.userbot.is_connected:
                 try:
                     result = await self.bot_manager.userbot.join_group(link)
                     if result.get("success"):
-                        # Save to database
                         self.db.add_group(
                             chat_id=result["chat_id"],
                             title=result["title"],
@@ -223,7 +260,6 @@ class MessageHandlers:
                         )
                         added_groups.append(result["title"])
 
-                        # Restart monitoring with new group
                         groups = self.db.get_groups(active_only=True)
                         await self.bot_manager.userbot.start_monitoring(groups)
                     else:
@@ -232,7 +268,6 @@ class MessageHandlers:
                     logger.error(f"Join group error: {e}")
                     failed_groups.append((link, str(e)))
             else:
-                # UserBot not connected - save manually for later
                 self.db.add_group(
                     chat_id=group_info.get("chat_id", 0),
                     title=group_info.get("title", link),
@@ -242,26 +277,28 @@ class MessageHandlers:
                 )
                 added_groups.append(group_info.get("title", link))
 
-        # Send results
+        result_text = ""
         if added_groups:
-            text = f"✅ **تم إضافة {len(added_groups)} قروب**\n\n"
+            result_text += f"✅ **تم إضافة {len(added_groups)} قروب**\n\n"
             for name in added_groups:
-                text += f"📌 {name}\n"
-        else:
-            text = ""
+                result_text += f"📌 {name}\n"
 
         if failed_groups:
-            text += f"\n❌ **فشل في {len(failed_groups)} قروب**\n\n"
+            result_text += f"\n❌ **فشل في {len(failed_groups)} قروب**\n\n"
             for link, error in failed_groups:
-                text += f"🔗 {link}\n⚠️ {error}\n\n"
+                result_text += f"🔗 {link}\n⚠️ {error}\n\n"
+
+        if not result_text:
+            result_text = "⚠️ لم يتم إضافة أي قروب"
 
         keyboard = create_keyboard([
             ("➕ إضافة قروب آخر", "add_group"),
             ("📡 القروبات", "menu_groups"),
-            ("◀️ رجوع", "back_main")
+            ("◀️ رجوع", "menu_groups"),
+            ("🏠 الرئيسية", "back_main")
         ], row_width=2)
 
-        await update.message.reply_text(text, reply_markup=keyboard, parse_mode="Markdown")
+        await update.message.reply_text(result_text, reply_markup=keyboard, parse_mode="Markdown")
         self.state_manager.clear_state(update.effective_user.id)
 
     def _parse_group_link(self, link: str) -> dict:
@@ -288,7 +325,6 @@ class MessageHandlers:
         """Handle keyword input"""
         words = [line.strip() for line in text.split("\n") if line.strip()]
 
-        # Check if replacing
         state = self.state_manager.get_state(update.effective_user.id)
         if state.data.get("replace"):
             self.db.clear_keywords()
@@ -301,17 +337,18 @@ class MessageHandlers:
         total = len(self.db.get_keywords())
 
         if added:
-            text = keywords_added_text(added, total)
+            result_text = keywords_added_text(added, total)
         else:
-            text = f"⚠️ **لم تُضف كلمات جديدة** (قد تكون موجودة بالفعل)\n\nالمجموع الكلي: **{total}** كلمات"
+            result_text = f"⚠️ **لم تُضف كلمات جديدة** (قد تكون موجودة بالفعل)\n\nالمجموع الكلي: **{total}** كلمات"
 
         keyboard = create_keyboard([
             ("➕ إضافة المزيد", "add_keyword"),
-            ("🔑 الكلمات المفتاحية", "menu_keywords"),
-            ("◀️ رجوع", "back_main")
+            ("🔑 الكلمات", "menu_keywords"),
+            ("◀️ رجوع", "menu_keywords"),
+            ("🏠 الرئيسية", "back_main")
         ], row_width=2)
 
-        await update.message.reply_text(text, reply_markup=keyboard, parse_mode="Markdown")
+        await update.message.reply_text(result_text, reply_markup=keyboard, parse_mode="Markdown")
         self.state_manager.clear_state(update.effective_user.id)
 
     async def _handle_blacklist(self, update: Update, context: ContextTypes.DEFAULT_TYPE, text: str):
@@ -326,38 +363,35 @@ class MessageHandlers:
         total = len(self.db.get_blacklist())
 
         if added:
-            text = f"✅ **تمت إضافة الكلمات المستبعدة:**\n\n"
+            result_text = "✅ **تمت إضافة الكلمات المستبعدة:**\n\n"
             for word in added:
-                text += f"🔹 `{word}`\n"
-            text += f"\nالمجموع: **{total}** كلمات مستبعدة"
+                result_text += f"🔹 `{word}`\n"
+            result_text += f"\nالمجموع: **{total}** كلمات مستبعدة"
         else:
-            text = f"⚠️ **لم تُضف كلمات جديدة**\n\nالمجموع: **{total}** كلمات مستبعدة"
+            result_text = f"⚠️ **لم تُضف كلمات جديدة**\n\nالمجموع: **{total}** كلمات مستبعدة"
 
         keyboard = create_keyboard([
             ("➕ إضافة المزيد", "add_blacklist"),
-            ("⚙️ الإعدادات", "menu_settings"),
-            ("◀️ رجوع", "back_main")
+            ("◀️ رجوع", "settings_blacklist"),
+            ("🏠 الرئيسية", "back_main")
         ], row_width=2)
 
-        await update.message.reply_text(text, reply_markup=keyboard, parse_mode="Markdown")
+        await update.message.reply_text(result_text, reply_markup=keyboard, parse_mode="Markdown")
         self.state_manager.clear_state(update.effective_user.id)
 
     async def _handle_destination_group(self, update: Update, context: ContextTypes.DEFAULT_TYPE, text: str):
         """Handle destination group input"""
-        # Parse group link/username
         group_info = self._parse_group_link(text)
 
         if not group_info:
             await update.message.reply_text(
-                "❌ **رابط غير صحيح**\n\nأرسل رابط صحيح أو معرف القروب",
-                reply_markup=back_button("menu_destination"),
+                "❌ **رابط غير صحيح**\n\nأرسل رابط صحيح أو معرف القروب مثل: @group_name",
+                reply_markup=back_and_home_keyboard("menu_destination"),
                 parse_mode="Markdown"
             )
             return
 
-        # Try to verify the group by sending a test message
         try:
-            # For username-based groups, try to resolve
             chat_id = None
             if group_info.get("username"):
                 try:
@@ -366,16 +400,15 @@ class MessageHandlers:
                     group_info["title"] = chat.title or group_info["username"]
                 except Exception as e:
                     logger.warning(f"Could not resolve chat: {e}")
-                    chat_id = text  # Use raw text as fallback
+                    chat_id = text
             else:
                 chat_id = text
 
-            # Save settings
             self.db.set_setting("destination_group_id", str(chat_id))
             self.db.set_setting("destination_group_title", group_info.get("title", "قروب الاستقبال"))
             self.db.set_setting("destination_group_username", group_info.get("username", text))
 
-            text = destination_group_text(
+            result_text = destination_group_text(
                 group_info.get("title", "قروب الاستقبال"),
                 group_info.get("username", text),
                 True
@@ -383,29 +416,26 @@ class MessageHandlers:
 
             keyboard = create_keyboard([
                 ("🧪 رسالة تجريبية", "test_destination"),
-                ("📥 قروب الاستقبال", "menu_destination"),
-                ("◀️ رجوع", "back_main")
+                ("◀️ رجوع", "menu_destination"),
+                ("🏠 الرئيسية", "back_main")
             ], row_width=2)
 
-            await update.message.reply_text(text, reply_markup=keyboard, parse_mode="Markdown")
+            await update.message.reply_text(result_text, reply_markup=keyboard, parse_mode="Markdown")
             self.state_manager.clear_state(update.effective_user.id)
 
         except Exception as e:
             logger.error(f"Destination group error: {e}")
             await update.message.reply_text(
-                f"❌ **خطأ:** {str(e)}\n\nتأكد من أن البوت عضو في القروب",
-                reply_markup=back_button("menu_destination"),
+                f"❌ **خطأ:** {str(e)}\n\nتأكد من أن البوت عضو وأدمن في القروب",
+                reply_markup=back_and_home_keyboard("menu_destination"),
                 parse_mode="Markdown"
             )
 
     async def _handle_admin_add(self, update: Update, context: ContextTypes.DEFAULT_TYPE, text: str):
         """Handle admin addition"""
-        # Parse username or user_id
         username = text.replace("@", "").strip()
 
         try:
-            # Try to get user info from Telegram
-            # First try as user_id
             try:
                 user_id = int(username)
             except ValueError:
@@ -429,20 +459,18 @@ class MessageHandlers:
                 added_by=update.effective_user.id
             )
 
-            text = f"✅ **تمت إضافة المشرف:** @{actual_username}\n\n"
+            result_text = f"✅ **تمت إضافة المشرف:** @{actual_username}\n\n"
             if actual_id == 0:
-                text += "⚠️ سيتم تحديث المعرف عند أول تفاعل للمستخدم مع البوت."
+                result_text += "⚠️ سيتم تحديث المعرف عند أول تفاعل للمستخدم مع البوت."
 
         except Exception as e:
-            text = f"❌ **خطأ:** {str(e)}"
+            result_text = f"❌ **خطأ:** {str(e)}"
 
         keyboard = create_keyboard([
             ("➕ إضافة مشرف", "add_admin"),
-            ("👤 المشرفين", "settings_admins"),
-            ("◀️ رجوع", "back_main")
+            ("◀️ رجوع", "settings_admins"),
+            ("🏠 الرئيسية", "back_main")
         ], row_width=2)
 
-        await update.message.reply_text(text, reply_markup=keyboard, parse_mode="Markdown")
+        await update.message.reply_text(result_text, reply_markup=keyboard, parse_mode="Markdown")
         self.state_manager.clear_state(update.effective_user.id)
-
-from telethon.sessions import StringSession
