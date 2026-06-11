@@ -11,6 +11,9 @@ import signal
 import sys
 from pathlib import Path
 
+from dotenv import load_dotenv
+load_dotenv()
+
 from bot.bot_manager import BotManager
 from bot.config import Config
 
@@ -27,9 +30,17 @@ logger = logging.getLogger(__name__)
 async def main():
     """Main entry point"""
     config = Config()
+
+    if not config.bot_token:
+        logger.error("BOT_TOKEN not set! Please add it to your .env file.")
+        sys.exit(1)
+
+    if not config.api_id or not config.api_hash:
+        logger.error("API_ID or API_HASH not set! Please add them to your .env file.")
+        sys.exit(1)
+
     manager = BotManager(config)
 
-    # Setup signal handlers
     def signal_handler(sig, frame):
         logger.info("Received shutdown signal, stopping...")
         asyncio.create_task(manager.shutdown())
@@ -39,7 +50,6 @@ async def main():
 
     try:
         await manager.start()
-        # Keep running
         while manager.running:
             await asyncio.sleep(1)
     except Exception as e:
