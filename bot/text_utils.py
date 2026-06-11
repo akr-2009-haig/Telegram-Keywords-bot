@@ -1,10 +1,9 @@
 # -*- coding: utf-8 -*-
 """Arabic text messages for all bot screens"""
 
-def start_text(name):
-    return f"""مرحباً بك يا **{name}** 👋
-
-أنا بوت **تجميع طلبات التوصيل**
+def start_text(name=""):
+    greeting = f"مرحباً بك يا **{name}** 👋\n\n" if name else "مرحباً بك 👋\n\n"
+    return f"""{greeting}أنا بوت **تجميع طلبات التوصيل**
 
 أساعدك في مراقبة قروبات التوصيل تلقائياً وتحويل الطلبات المناسبة لك مباشرة
 
@@ -34,13 +33,13 @@ def enter_phone_text():
 مثال: +966512345678"""
 
 def code_sent_text(phone):
-    masked = phone[:7] + "XXXX" + phone[-2:]
+    masked = phone[:7] + "XXXX" + phone[-2:] if len(phone) > 9 else phone
     return f"""✅ تم إرسال كود التحقق إلى الرقم **{masked}**
 
 🔢 أرسل لي الكود الآن"""
 
 def account_linked_text(phone):
-    masked = phone[:7] + "XXXX" + phone[-2:]
+    masked = phone[:7] + "XXXX" + phone[-2:] if len(phone) > 9 else phone
     return f"""✅ **تم ربط الحساب بنجاح!**
 
 الحساب: **{masked}**
@@ -48,30 +47,54 @@ def account_linked_text(phone):
 
 يمكنك الآن الانتقال للوحة التحكم"""
 
-def main_menu_text(bot_status, userbot_status, groups_count, keywords_count, today_count, last_order_time):
-    status_emoji = "🟢" if bot_status else "🔴"
-    userbot_emoji = "🟢" if userbot_status else "🔴"
+def main_menu_text(bot_running=True, userbot_connected=False,
+                   groups_count=0, keywords_count=0,
+                   today_orders=0, last_order_time="لا يوجد"):
+    status_emoji = "🟢" if bot_running else "🔴"
+    userbot_emoji = "🟢" if userbot_connected else "🔴"
     return f"""🏠 **لوحة التحكم الرئيسية**
 
-حالة البوت: {status_emoji} {"يعمل" if bot_status else "متوقف"}
-حالة الحساب المراقب: {userbot_emoji} {"متصل" if userbot_status else "غير متصل"}
+حالة البوت: {status_emoji} {"يعمل" if bot_running else "متوقف"}
+حالة الحساب المراقب: {userbot_emoji} {"متصل" if userbot_connected else "غير متصل"}
 القروبات المراقبة: **{groups_count}** قروب
 الكلمات المفتاحية: **{keywords_count}** كلمات
-الطلبات اليوم: **{today_count}** طلب
+الطلبات اليوم: **{today_orders}** طلب
 
 آخر طلب مُحوّل: منذ **{last_order_time}**"""
+
+def status_text(bot_running=True, userbot_connected=False,
+                groups_count=0, keywords_count=0,
+                today_orders=0, total_orders=0, uptime="غير معروف"):
+    status_emoji = "🟢" if bot_running else "🔴"
+    userbot_emoji = "🟢" if userbot_connected else "🔴"
+    return f"""📊 **حالة البوت**
+
+{status_emoji} البوت: {"يعمل" if bot_running else "متوقف"}
+{userbot_emoji} الحساب المراقب: {"متصل" if userbot_connected else "غير متصل"}
+
+📡 القروبات النشطة: **{groups_count}**
+🔑 الكلمات المفتاحية: **{keywords_count}**
+
+📥 طلبات اليوم: **{today_orders}**
+📊 إجمالي الطلبات: **{total_orders}**
+
+⏱ وقت التشغيل: **{uptime}**"""
 
 def groups_menu_text(groups):
     active_count = sum(1 for g in groups if g.get("is_active", 1))
     text = f"""📡 **إدارة القروبات المراقبة**
 
-القروبات النشطة حالياً: **{active_count}** قروب
+القروبات النشطة حالياً: **{active_count}** من **{len(groups)}** قروب
 
 """
     for i, group in enumerate(groups, 1):
-        status = "🟢" if group.get("is_active", 1) else "🟡"
+        status = "🟢" if group.get("is_active", 1) else "🔴"
         members = group.get("member_count", 0)
-        text += f"{i}️⃣ {status} {group['title']} — {members:,} عضو\n"
+        title = group.get("title", "Unknown")
+        text += f"{i}. {status} {title} — {members:,} عضو\n"
+
+    if not groups:
+        text += "📭 لا توجد قروبات مضافة بعد\n\nاضغط ➕ لإضافة قروبك الأول"
     return text
 
 def add_group_text():
@@ -86,7 +109,7 @@ def add_group_text():
 
 💡 يمكنك إرسال عدة روابط دفعة واحدة (كل رابط في سطر)"""
 
-def group_added_text(title, members):
+def group_added_text(title, members=0):
     return f"""✅ **تم إضافة القروب بنجاح!**
 
 📌 الاسم: {title}
@@ -106,8 +129,7 @@ def group_add_failed_text():
 تأكد من صلاحية الرابط وأعد المحاولة"""
 
 def delete_group_text(groups):
-    text = "🗑 **حذف قروب من المراقبة**\n\nاختر القروب الذي تريد حذفه:\n\n"
-    return text
+    return "🗑 **حذف قروب من المراقبة**\n\nاختر القروب الذي تريد حذفه:\n\n"
 
 def confirm_delete_group_text(title):
     return f"""⚠️ **تأكيد الحذف**
@@ -126,9 +148,12 @@ def keywords_menu_text(keywords):
 الكلمات الحالية:
 
 """
-    for i, word in enumerate(keywords, 1):
-        text += f"{i}. `{word}`\n"
-    text += f"\nالمجموع: **{len(keywords)}** كلمات مفتاحية"
+    if keywords:
+        for i, word in enumerate(keywords, 1):
+            text += f"{i}. `{word}`\n"
+        text += f"\nالمجموع: **{len(keywords)}** كلمات مفتاحية"
+    else:
+        text += "📭 لا توجد كلمات مفتاحية بعد\n\nاضغط ➕ لإضافة كلماتك الأولى"
     return text
 
 def add_keyword_text():
@@ -139,7 +164,7 @@ def add_keyword_text():
 💡 ملاحظات:
 🔹 يمكنك إرسال عدة كلمات دفعة واحدة (كل كلمة في سطر)
 🔹 البحث لا يفرق بين الحروف الكبيرة والصغيرة
-🔹 يمكنك كتابة عبارة كاملة مثل: "أبحث عن مندوب""""
+🔹 يمكنك كتابة عبارة كاملة مثل: "أبحث عن مندوب\""""
 
 def keywords_added_text(words, total):
     text = "✅ تمت إضافة الكلمات التالية:\n\n"
@@ -156,7 +181,7 @@ def destination_group_text(title, username, status):
 
 القروب الحالي: **{title}**
 المعرف: `{username}`
-الحالة: {status_emoji} {"متصل" if status else "غير متصل"}"""
+الحالة: {status_emoji} {"مُعيَّن" if status else "غير محدد"}"""
 
 def change_destination_text():
     return """🔄 **تغيير قروب الاستقبال**
@@ -171,35 +196,26 @@ def change_destination_text():
 🔹 `https://t.me/group_name`
 🔹 `@group_name`"""
 
-def stats_text(today_checked, today_forwarded, week_checked, week_forwarded, 
-               month_checked, month_forwarded, top_groups, top_keywords):
-    text = f"""📊 **إحصائيات المراقبة**
+def stats_text(today=0, total=0, checked=0,
+               groups_count=0, keywords_count=0, uptime="غير معروف"):
+    """Flexible stats display"""
+    return f"""📊 **إحصائيات المراقبة**
 
-📅 **إحصائيات اليوم:**
-📨 الرسائل المراقبة: **{today_checked:,}**
-✅ الطلبات المُحوّلة: **{today_forwarded:,}**
+📅 **اليوم:**
+✅ الطلبات المُحوّلة: **{today:,}**
 
-📅 **إحصائيات الأسبوع:**
-📨 الرسائل المراقبة: **{week_checked:,}**
-✅ الطلبات المُحوّلة: **{week_forwarded:,}**
+📈 **الإجمالي:**
+📨 رسائل فُحصت: **{checked:,}**
+✅ طلبات حُوّلت: **{total:,}**
 
-📅 **إحصائيات الشهر:**
-📨 الرسائل المراقبة: **{month_checked:,}**
-✅ الطلبات المُحوّلة: **{month_forwarded:,}**
+⚙️ **الإعدادات الحالية:**
+📡 قروبات نشطة: **{groups_count}**
+🔑 كلمات مفتاحية: **{keywords_count}**
 
-📡 **أكثر القروبات نشاطاً:**
-"""
-    for i, (name, count) in enumerate(top_groups, 1):
-        text += f"{i}. {name} — {count} طلب\n"
-
-    text += "\n🔑 **أكثر الكلمات تطابقاً:**\n"
-    for i, (word, count) in enumerate(top_keywords, 1):
-        text += f'{i}. "{word}" — {count} مرة\n'
-
-    return text
+⏱ وقت التشغيل: **{uptime}**"""
 
 def settings_text():
-    return "⚙️ **إعدادات البوت**"
+    return "⚙️ **إعدادات البوت**\n\nاختر الإعداد الذي تريد تعديله:"
 
 def blacklist_menu_text(words):
     text = """🚫 **الكلمات المستبعدة**
@@ -209,9 +225,12 @@ def blacklist_menu_text(words):
 الكلمات المستبعدة حالياً:
 
 """
-    for i, word in enumerate(words, 1):
-        text += f"{i}. `{word}`\n"
-    text += f"\nالمجموع: **{len(words)}** كلمات مستبعدة"
+    if words:
+        for i, word in enumerate(words, 1):
+            text += f"{i}. `{word}`\n"
+        text += f"\nالمجموع: **{len(words)}** كلمات مستبعدة"
+    else:
+        text += "📭 لا توجد كلمات مستبعدة"
     return text
 
 def message_format_preview_text(format_type):
@@ -227,7 +246,7 @@ def message_format_preview_text(format_type):
 👤 المرسل: @username
 
 💬 نص الرسالة:
-"السلام عليكم، محتاج توصيل طرد من الرياض للدمام""""
+"السلام عليكم، محتاج توصيل طرد من الرياض للدمام\""""
     elif format_type == "short":
         return """📝 **تنسيق الرسالة المُحوّلة**
 
@@ -237,7 +256,7 @@ def message_format_preview_text(format_type):
 🔑 "محتاج توصيل"
 👤 @username
 
-💬 "السلام عليكم، محتاج توصيل طرد من الرياض للدمام""""
+💬 "السلام عليكم، محتاج توصيل طرد من الرياض للدمام\""""
     else:
         return """📝 **تنسيق الرسالة المُحوّلة**
 
@@ -265,26 +284,37 @@ def userbot_status_text(phone, status, last_activity, groups_count, uptime):
 
 الرقم: **{phone}**
 الحالة: {status_emoji} {"متصل" if status else "غير متصل"}
-آخر نشاط: منذ **{last_activity}**
+آخر نشاط: **{last_activity}**
 القروبات المنضم لها: **{groups_count}** قروب
 وقت التشغيل: **{uptime}**"""
 
-def logs_text(messages, total_today):
+def logs_text(messages, today_count, page=0, total=0, per_page=10):
+    start_idx = page * per_page
+    pages_count = max(1, (total + per_page - 1) // per_page)
     text = f"""📋 **سجل آخر الطلبات المُحوّلة**
+صفحة **{page + 1}** من **{pages_count}** — إجمالي **{total}** طلب
 
 """
-    for i, msg in enumerate(messages, 1):
-        time_str = msg.get("created_at", "غير معروف")
-        group = msg.get("group_title", "غير معروف")
-        keyword = msg.get("keyword", "غير معروف")
-        content = msg.get("message_text", "")[:100]
-        text += f"""{i}️⃣ 🕐 {time_str}
+    if messages:
+        for i, msg in enumerate(messages, start_idx + 1):
+            time_str = msg.get("created_at", "غير معروف")
+            if "T" in str(time_str):
+                time_str = str(time_str).replace("T", " ").split(".")[0]
+            group = msg.get("group_title", "غير معروف")
+            keyword = msg.get("keyword", "غير معروف")
+            content = (msg.get("message_text") or "")[:80]
+            status = msg.get("status", "new")
+            status_icon = "✅" if status == "taken" else ("🚫" if status == "ignored" else "🆕")
+            text += f"""{status_icon} **#{i}** — {time_str}
 📡 {group}
 🔑 "{keyword}"
 💬 "{content}..."
 
 """
-    text += f"عرض **{len(messages)}** من أصل **{total_today}** طلب اليوم"
+    else:
+        text += "📭 لا توجد طلبات بعد\n\nابدأ المراقبة لتظهر الطلبات هنا"
+
+    text += f"\nاليوم: **{today_count}** طلب"
     return text
 
 def forwarded_message_text(order_num, group_title, sender, keyword, time_str, message_text):
@@ -296,7 +326,7 @@ def forwarded_message_text(order_num, group_title, sender, keyword, time_str, me
 🕐 **الوقت:** {time_str}
 
 💬 **نص الطلب:**
-"{message_text}""""
+"{message_text}\""""
 
 def alert_disconnected_text(phone, last_activity):
     return f"""🔴 **تنبيه: الحساب المراقب انقطع!**
@@ -320,20 +350,18 @@ def help_text():
 **الأوامر المتاحة:**
 /start — بدء البوت
 /menu — لوحة التحكم
-/groups — القروبات
-/addgroup — إضافة قروب
+/groups — إدارة القروبات
 /keywords — الكلمات المفتاحية
-/addword — إضافة كلمة
 /stats — الإحصائيات
+/status — الحالة الكاملة
 /pause — إيقاف مؤقت
-/resume — استئناف
-/status — الحالة
-/logs — السجل
-/settings — الإعدادات
+/resume — استئناف المراقبة
 /help — المساعدة
 
 **كيف يعمل:**
-1. اربط حساب تيليجرام للمراقبة
-2. أضف قروبات التوصيل
-3. حدد الكلمات المفتاحية
-4. استقبل الطلبات تلقائياً!"""
+1️⃣ اربط حساب تيليجرام للمراقبة
+2️⃣ أضف قروبات التوصيل
+3️⃣ حدد الكلمات المفتاحية
+4️⃣ استقبل الطلبات تلقائياً!
+
+**ملاحظة:** البوت يراقب الرسائل فقط، لا يرسل باسمك"""
