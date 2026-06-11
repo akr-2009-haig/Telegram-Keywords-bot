@@ -4,11 +4,15 @@
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 def create_keyboard(buttons, row_width=2):
-    """Create inline keyboard from list of tuples (text, callback_data)"""
+    """Create inline keyboard from list of tuples (text, callback_data) or (text, callback_data/url, type)"""
     keyboard = []
     row = []
-    for text, callback in buttons:
-        row.append(InlineKeyboardButton(text, callback_data=callback))
+    for item in buttons:
+        if len(item) == 3 and item[2] == "url":
+            btn = InlineKeyboardButton(item[0], url=item[1])
+        else:
+            btn = InlineKeyboardButton(item[0], callback_data=item[1])
+        row.append(btn)
         if len(row) >= row_width:
             keyboard.append(row)
             row = []
@@ -16,8 +20,9 @@ def create_keyboard(buttons, row_width=2):
         keyboard.append(row)
     return InlineKeyboardMarkup(keyboard)
 
-def main_menu_keyboard():
-    """Main menu keyboard"""
+def main_menu_keyboard(bot_running=True):
+    """Main menu keyboard — toggle button based on bot status"""
+    toggle_btn = ("⏸ إيقاف المراقبة", "bot_pause") if bot_running else ("▶️ تشغيل المراقبة", "bot_start")
     buttons = [
         ("📡 القروبات", "menu_groups"),
         ("🔑 الكلمات المفتاحية", "menu_keywords"),
@@ -25,8 +30,8 @@ def main_menu_keyboard():
         ("📊 الإحصائيات", "menu_stats"),
         ("⚙️ الإعدادات", "menu_settings"),
         ("📱 الحساب المراقب", "menu_userbot"),
+        toggle_btn,
         ("📋 سجل الطلبات", "menu_logs"),
-        ("▶️ تشغيل", "bot_start")  # or ⏸ إيقاف
     ]
     return create_keyboard(buttons, row_width=2)
 
@@ -109,3 +114,63 @@ def format_options_keyboard():
 def back_button(callback="back_main"):
     """Single back button"""
     return create_keyboard([("◀️ رجوع", callback)], row_width=1)
+
+def back_and_home_keyboard(back_callback):
+    """Back + Home buttons"""
+    return create_keyboard([
+        ("◀️ رجوع", back_callback),
+        ("🏠 الرئيسية", "back_main")
+    ], row_width=2)
+
+def forwarded_message_keyboard(record_id, sender_id, sender_username, chat_username=None):
+    """Action buttons on forwarded messages in destination group"""
+    buttons = []
+
+    # Contact sender button
+    if sender_id and sender_id != 0:
+        buttons.append((
+            "💬 تواصل مع المرسل",
+            f"tg://user?id={sender_id}",
+            "url"
+        ))
+    elif sender_username and sender_username.startswith("@"):
+        buttons.append((
+            "💬 تواصل مع المرسل",
+            f"https://t.me/{sender_username[1:]}",
+            "url"
+        ))
+
+    buttons.append(("✅ تم الأخذ", f"order_taken_{record_id}"))
+    buttons.append(("🚫 تجاهل", f"order_ignore_{record_id}"))
+
+    if chat_username:
+        buttons.append((
+            "📡 فتح القروب",
+            f"https://t.me/{chat_username}",
+            "url"
+        ))
+
+    return create_keyboard(buttons, row_width=2)
+
+def logs_keyboard(page=0, total=0, per_page=10):
+    """Logs navigation keyboard"""
+    buttons = []
+
+    has_prev = page > 0
+    has_next = (page + 1) * per_page < total
+
+    nav = []
+    if has_prev:
+        nav.append(("⬅️ السابق", f"logs_page_{page - 1}"))
+    if has_next:
+        nav.append(("➡️ التالي", f"logs_page_{page + 1}"))
+    if nav:
+        buttons.extend(nav)
+
+    buttons.extend([
+        ("📅 فلتر بالتاريخ", "logs_filter_date"),
+        ("📡 فلتر بالقروب", "logs_filter_group"),
+        ("🔑 فلتر بالكلمة", "logs_filter_keyword"),
+        ("◀️ رجوع", "back_main")
+    ])
+    return create_keyboard(buttons, row_width=2)
