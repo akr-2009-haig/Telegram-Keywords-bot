@@ -35,7 +35,15 @@ class UserBotManager:
         self._phone_code_hash = None
 
     async def create_client(self, phone: str = None, session_string: str = None):
-        """Create or restore Telegram client"""
+        """Create or restore Telegram client — always disconnects existing client first"""
+        if self.client:
+            try:
+                await self.client.disconnect()
+            except Exception:
+                pass
+            self.client = None
+            self.is_connected = False
+
         if session_string:
             self.client = TelegramClient(
                 StringSession(session_string),
@@ -49,6 +57,7 @@ class UserBotManager:
                 self.api_hash
             )
             self._phone = phone
+            self._phone_code_hash = None
         else:
             self.client = TelegramClient(
                 StringSession(self.session_string) if self.session_string else StringSession(),
@@ -111,9 +120,11 @@ class UserBotManager:
             session_string = StringSession.save(self.client.session)
             self.is_connected = True
 
+            phone = self._phone or ""
+
             return {
                 "status": "connected",
-                "phone": self._phone,
+                "phone": phone,
                 "session_string": session_string,
                 "user_id": me.id,
                 "username": me.username or ""
@@ -154,13 +165,13 @@ class UserBotManager:
         for handler in self._handlers:
             try:
                 self.client.remove_event_handler(handler)
-            except:
+            except Exception:
                 pass
         self._handlers = []
         if self.client:
             try:
                 await self.client.disconnect()
-            except:
+            except Exception:
                 pass
         self.is_connected = False
 
@@ -180,7 +191,7 @@ class UserBotManager:
         for handler in self._handlers:
             try:
                 self.client.remove_event_handler(handler)
-            except:
+            except Exception:
                 pass
         self._handlers = []
 
@@ -235,7 +246,7 @@ class UserBotManager:
         for handler in self._handlers:
             try:
                 self.client.remove_event_handler(handler)
-            except:
+            except Exception:
                 pass
         self._handlers = []
         logger.info("Stopped monitoring")

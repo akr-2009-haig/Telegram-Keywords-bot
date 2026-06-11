@@ -150,7 +150,7 @@ class BotManager:
 
     async def _handle_monitored_message(self, message_data: Dict[str, Any]):
         """Handle message from monitored groups"""
-        if self._paused_until and datetime.now() < self._paused_until:
+        if self.is_paused():
             return
 
         if message_data.get("type") == "removed_from_group":
@@ -160,7 +160,6 @@ class BotManager:
                 f"تمت إزالة الحساب المراقب من:\n📌 {escape_md(chat_title)}\n\n"
                 f"لن يتم مراقبة هذا القروب بعد الآن",
                 keyboard=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("🔄 إعادة الانضمام", callback_data=f"rejoin_group"),
                     InlineKeyboardButton("🏠 لوحة التحكم", callback_data="back_main")
                 ]])
             )
@@ -280,7 +279,6 @@ class BotManager:
                     reply_markup=reply_markup
                 )
 
-                # Update with forwarded message ID
                 self.db.update_forwarded_message_status(record_id, "new")
                 self.db.increment_stat(messages_checked=1, messages_forwarded=1)
 
@@ -295,7 +293,7 @@ class BotManager:
                             text=f"🔔 طلب جديد من *{escape_md(group_title)}*",
                             parse_mode="MarkdownV2"
                         )
-                    except:
+                    except Exception:
                         pass
 
         except Exception as e:
@@ -344,7 +342,7 @@ class BotManager:
                 await self.application.updater.stop()
                 await self.application.stop()
                 await self.application.shutdown()
-            except:
+            except Exception:
                 pass
 
         logger.info("Bot shutdown complete")
@@ -366,11 +364,11 @@ class BotManager:
 
     def is_paused(self) -> bool:
         """Check if bot is paused"""
-        if self._paused_until and datetime.now() < self._paused_until:
-            return True
+        if self._paused_until is None:
+            return False
         if self._paused_until == datetime.max:
             return True
-        return False
+        return datetime.now() < self._paused_until
 
     async def reconnect_userbot(self):
         """Reconnect userbot"""

@@ -46,9 +46,11 @@ async def main():
 
     manager = BotManager(config)
 
+    loop = asyncio.get_event_loop()
+
     def signal_handler(sig, frame):
         logger.info("Received shutdown signal, stopping...")
-        asyncio.create_task(manager.shutdown())
+        loop.create_task(manager.shutdown())
 
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)

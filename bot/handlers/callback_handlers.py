@@ -154,6 +154,8 @@ class CallbackHandlers:
             await self.toggle_dup_setting(update, context, "dup_similar")
         elif data == "dup_duration":
             await self.set_dup_duration(update, context)
+        elif data.startswith("dup_dur_"):
+            await self.do_set_dup_duration(update, context)
 
         # ── Time settings ──────────────────────────────────────────
         elif data == "time_24h":
@@ -172,6 +174,8 @@ class CallbackHandlers:
             await self.disconnect_userbot(update, context)
         elif data == "confirm_disconnect":
             await self.do_disconnect_userbot(update, context)
+        elif data == "rejoin_group":
+            await self.show_groups(update, context)
 
         # ── Pause/Resume  — IMPORTANT: specific checks BEFORE startswith ──
         elif data == "pause_duration":
@@ -806,6 +810,20 @@ class CallbackHandlers:
         keyboard = create_keyboard(buttons, row_width=2)
         if update.callback_query:
             await update.callback_query.edit_message_text(text, reply_markup=keyboard, parse_mode="Markdown")
+
+    async def do_set_dup_duration(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Apply selected duplicate prevention duration"""
+        query = update.callback_query
+        try:
+            minutes = int(query.data.replace("dup_dur_", ""))
+        except ValueError:
+            await query.answer("❌ خطأ في البيانات", show_alert=True)
+            return
+        self.db.set_setting("dup_duration", str(minutes))
+        labels = {15: "15 دقيقة", 30: "30 دقيقة", 60: "ساعة", 120: "ساعتين", 360: "6 ساعات"}
+        label = labels.get(minutes, f"{minutes} دقيقة")
+        await query.answer(f"✅ تم التعيين: {label}", show_alert=True)
+        await self.settings_duplicate(update, context)
 
     async def settings_admins(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Admin management"""
