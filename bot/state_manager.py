@@ -10,6 +10,7 @@ class State(Enum):
     IDLE = auto()
     WAITING_PHONE = auto()
     WAITING_CODE = auto()
+    WAITING_2FA_PASSWORD = auto()
     WAITING_GROUP_LINK = auto()
     WAITING_GROUP_DELETE = auto()
     WAITING_KEYWORD = auto()
