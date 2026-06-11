@@ -83,6 +83,7 @@ class Database:
                 sender_id INTEGER,
                 message_text TEXT,
                 group_title TEXT,
+                status TEXT DEFAULT 'new',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
@@ -97,12 +98,14 @@ class Database:
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS stats (
                 id INTEGER PRIMARY KEY,
-                date TEXT,
+                date TEXT UNIQUE,
                 messages_checked INTEGER DEFAULT 0,
-                messages_forwarded INTEGER DEFAULT 0,
-                group_id INTEGER,
-                keyword TEXT
+                messages_forwarded INTEGER DEFAULT 0
             )
+        """)
+
+        cursor.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS stats_date_idx ON stats (date)
         """)
 
         cursor.execute("""
@@ -161,9 +164,9 @@ class Database:
         conn = self._get_conn()
         cursor = conn.cursor()
         if active_only:
-            cursor.execute("SELECT * FROM groups WHERE is_active = 1")
+            cursor.execute("SELECT * FROM groups WHERE is_active = 1 ORDER BY added_at DESC")
         else:
-            cursor.execute("SELECT * FROM groups")
+            cursor.execute("SELECT * FROM groups ORDER BY added_at DESC")
         return [dict(row) for row in cursor.fetchall()]
 
     def get_group(self, chat_id):
@@ -177,6 +180,12 @@ class Database:
         conn = self._get_conn()
         cursor = conn.cursor()
         cursor.execute("DELETE FROM groups WHERE chat_id = ?", (chat_id,))
+        conn.commit()
+
+    def delete_all_groups(self):
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM groups")
         conn.commit()
 
     def toggle_group(self, chat_id):
@@ -255,15 +264,29 @@ class Database:
         """, (original_message_id, original_chat_id, forwarded_message_id, forwarded_chat_id,
               keyword, sender_username, sender_id, message_text, group_title))
         conn.commit()
+        return cursor.lastrowid
 
-    def get_recent_messages(self, limit=20):
+    def get_forwarded_message(self, record_id):
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM forwarded_messages WHERE id = ?", (record_id,))
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+    def update_forwarded_message_status(self, record_id, status):
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        cursor.execute("UPDATE forwarded_messages SET status = ? WHERE id = ?", (status, record_id))
+        conn.commit()
+
+    def get_recent_messages(self, limit=20, offset=0):
         conn = self._get_conn()
         cursor = conn.cursor()
         cursor.execute("""
             SELECT * FROM forwarded_messages 
             ORDER BY created_at DESC 
-            LIMIT ?
-        """, (limit,))
+            LIMIT ? OFFSET ?
+        """, (limit, offset))
         return [dict(row) for row in cursor.fetchall()]
 
     def get_messages_count(self, hours=24):
@@ -276,6 +299,25 @@ class Database:
         """, (since.isoformat(),))
         row = cursor.fetchone()
         return row["count"] if row else 0
+
+    def get_total_messages_count(self):
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) as count FROM forwarded_messages")
+        row = cursor.fetchone()
+        return row["count"] if row else 0
+
+    def is_duplicate(self, sender_id, message_text, minutes=30):
+        """Check if a similar message was recently forwarded from same sender"""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        since = datetime.now() - timedelta(minutes=minutes)
+        cursor.execute("""
+            SELECT COUNT(*) as count FROM forwarded_messages
+            WHERE sender_id = ? AND message_text = ? AND created_at > ?
+        """, (sender_id, message_text, since.isoformat()))
+        row = cursor.fetchone()
+        return row["count"] > 0 if row else False
 
     def get_setting(self, key, default=None):
         conn = self._get_conn()
@@ -300,9 +342,9 @@ class Database:
             INSERT INTO stats (date, messages_checked, messages_forwarded)
             VALUES (?, ?, ?)
             ON CONFLICT(date) DO UPDATE SET
-                messages_checked = messages_checked + ?,
-                messages_forwarded = messages_forwarded + ?
-        """, (today, messages_checked, messages_forwarded, messages_checked, messages_forwarded))
+                messages_checked = messages_checked + excluded.messages_checked,
+                messages_forwarded = messages_forwarded + excluded.messages_forwarded
+        """, (today, messages_checked, messages_forwarded))
         conn.commit()
 
     def get_stats(self, days=30):
@@ -375,41 +417,30 @@ class Database:
         cursor.execute("SELECT 1 FROM admins WHERE user_id = ?", (user_id,))
         return cursor.fetchone() is not None
 
-    # Permissions system
     def has_permission(self, user_id, permission):
-        """Check if user has specific permission"""
-        # Owner has all permissions
         if self.is_owner(user_id):
             return True
-
-        # Check admin permissions
         conn = self._get_conn()
         cursor = conn.cursor()
         cursor.execute('SELECT permissions FROM admins WHERE user_id = ?', (user_id,))
         row = cursor.fetchone()
         if row:
-            import json
             perms = json.loads(row['permissions'])
             return 'all' in perms or permission in perms
         return False
 
     def update_admin_permissions(self, user_id, permissions):
-        """Update admin permissions"""
         conn = self._get_conn()
         cursor = conn.cursor()
-        import json
         perms = json.dumps(permissions)
         cursor.execute('UPDATE admins SET permissions = ? WHERE user_id = ?', (perms, user_id))
         conn.commit()
 
     def get_admin_permissions(self, user_id):
-        """Get admin permissions list"""
         conn = self._get_conn()
         cursor = conn.cursor()
         cursor.execute('SELECT permissions FROM admins WHERE user_id = ?', (user_id,))
         row = cursor.fetchone()
         if row:
-            import json
             return json.loads(row['permissions'])
         return []
-
