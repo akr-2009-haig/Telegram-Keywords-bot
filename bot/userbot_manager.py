@@ -13,7 +13,7 @@ from telethon.tl.functions.channels import JoinChannelRequest, LeaveChannelReque
 from telethon.tl.functions.messages import ImportChatInviteRequest
 from telethon.errors import (
     FloodWaitError, InviteHashExpiredError, UserAlreadyParticipantError,
-    ChannelInvalidError, ChannelPrivateError
+    ChannelInvalidError, ChannelPrivateError, SessionPasswordNeededError
 )
 
 logger = logging.getLogger(__name__)
@@ -76,16 +76,39 @@ class UserBotManager:
             return {"status": "error", "error": str(e)}
 
     async def verify_code(self, code: str) -> Dict:
-        """Verify code and complete login"""
+        """Verify code and complete login — handles 2FA if needed"""
         try:
             if not self._phone or not self._phone_code_hash:
-                return {"status": "error", "error": "Phone not set"}
+                return {"status": "error", "error": "Phone not set. Please start over."}
 
             await self.client.sign_in(self._phone, code, phone_code_hash=self._phone_code_hash)
 
             me = await self.client.get_me()
             session_string = StringSession.save(self.client.session)
+            self.is_connected = True
 
+            return {
+                "status": "connected",
+                "phone": self._phone,
+                "session_string": session_string,
+                "user_id": me.id,
+                "username": me.username or ""
+            }
+
+        except SessionPasswordNeededError:
+            return {"status": "2fa_required", "error": "Two-step verification is enabled"}
+
+        except Exception as e:
+            logger.error(f"Verify code error: {e}")
+            return {"status": "error", "error": str(e)}
+
+    async def verify_password(self, password: str) -> Dict:
+        """Complete 2FA verification with password"""
+        try:
+            await self.client.sign_in(password=password)
+
+            me = await self.client.get_me()
+            session_string = StringSession.save(self.client.session)
             self.is_connected = True
 
             return {
@@ -97,7 +120,7 @@ class UserBotManager:
             }
 
         except Exception as e:
-            logger.error(f"Verify code error: {e}")
+            logger.error(f"2FA verification error: {e}")
             return {"status": "error", "error": str(e)}
 
     async def connect_existing(self, session_string: str) -> Dict:
@@ -127,10 +150,19 @@ class UserBotManager:
 
     async def disconnect(self):
         """Disconnect the UserBot"""
-        if self.client:
-            await self.client.disconnect()
-        self.is_connected = False
         self.is_running = False
+        for handler in self._handlers:
+            try:
+                self.client.remove_event_handler(handler)
+            except:
+                pass
+        self._handlers = []
+        if self.client:
+            try:
+                await self.client.disconnect()
+            except:
+                pass
+        self.is_connected = False
 
     def set_message_handler(self, handler: Callable):
         """Set callback for new messages"""
@@ -153,13 +185,12 @@ class UserBotManager:
         self._handlers = []
 
         # Get monitored chat IDs
-        monitored_ids = [g["chat_id"] for g in groups if g.get("is_active", 1)]
+        monitored_ids = [g["chat_id"] for g in groups if g.get("is_active", 1) and g.get("chat_id", 0) != 0]
 
         if not monitored_ids:
-            logger.warning("No active groups to monitor")
+            logger.warning("No active groups with valid IDs to monitor")
             return True
 
-        # Add new message handler
         @self.client.on(events.NewMessage(chats=monitored_ids))
         async def handle_new_message(event):
             if not self.is_running:
@@ -176,13 +207,14 @@ class UserBotManager:
                 sender = await event.get_sender()
                 sender_username = f"@{sender.username}" if sender and hasattr(sender, "username") and sender.username else "مجهول"
                 sender_id = sender.id if sender else 0
+                chat_username = getattr(chat, "username", None)
 
-                # Call the message handler
                 if self.message_handler:
                     await self.message_handler({
                         "message_id": event.message.id,
                         "chat_id": chat_id,
                         "chat_title": getattr(chat, "title", "Unknown"),
+                        "chat_username": chat_username,
                         "text": message_text,
                         "sender_username": sender_username,
                         "sender_id": sender_id,
@@ -194,7 +226,6 @@ class UserBotManager:
                 logger.error(f"Error handling message: {e}")
 
         self._handlers.append(handle_new_message)
-
         logger.info(f"Started monitoring {len(monitored_ids)} groups")
         return True
 
@@ -212,28 +243,23 @@ class UserBotManager:
     async def join_group(self, invite_link: str) -> Dict:
         """Join a group using invite link or username"""
         try:
-            # Handle different link formats
             if "/+" in invite_link:
-                # Private group with invite hash
                 hash_part = invite_link.split("/+")[-1]
                 result = await self.client(ImportChatInviteRequest(hash_part))
                 chat = result.chats[0] if hasattr(result, "chats") and result.chats else None
 
             elif "joinchat/" in invite_link:
-                # Old format private group
                 hash_part = invite_link.split("joinchat/")[-1]
                 result = await self.client(ImportChatInviteRequest(hash_part))
                 chat = result.chats[0] if hasattr(result, "chats") and result.chats else None
 
             elif "t.me/" in invite_link or "telegram.me/" in invite_link:
-                # Public group
                 username = invite_link.split("/")[-1].replace("@", "")
                 entity = await self.client.get_entity(username)
                 await self.client(JoinChannelRequest(entity))
                 chat = entity
 
             elif invite_link.startswith("@"):
-                # Username directly
                 entity = await self.client.get_entity(invite_link)
                 await self.client(JoinChannelRequest(entity))
                 chat = entity
@@ -255,7 +281,6 @@ class UserBotManager:
         except InviteHashExpiredError:
             return {"success": False, "error": "الرابط منتهي الصلاحية"}
         except UserAlreadyParticipantError:
-            # Already in group, try to get info
             try:
                 if "t.me/" in invite_link or "telegram.me/" in invite_link:
                     username = invite_link.split("/")[-1].replace("@", "")
@@ -263,7 +288,7 @@ class UserBotManager:
                 elif invite_link.startswith("@"):
                     entity = await self.client.get_entity(invite_link)
                 else:
-                    return {"success": False, "error": "الحساب موجود بالفعل في القروب"}
+                    return {"success": False, "error": "الحساب موجود بالفعل في القروب ولا يمكن الحصول على المعلومات"}
 
                 return {
                     "success": True,
@@ -275,7 +300,7 @@ class UserBotManager:
             except Exception as e:
                 return {"success": False, "error": f"الحساب موجود بالفعل: {str(e)}"}
         except FloodWaitError as e:
-            return {"success": False, "error": f"انتظر {e.seconds} ثانية"}
+            return {"success": False, "error": f"انتظر {e.seconds} ثانية ثم أعد المحاولة"}
         except ChannelInvalidError:
             return {"success": False, "error": "القروب غير صالح"}
         except ChannelPrivateError:
@@ -324,15 +349,6 @@ class UserBotManager:
         except Exception as e:
             logger.error(f"Error getting dialogs: {e}")
             return []
-
-    async def send_message_to_group(self, chat_id: int, text: str) -> bool:
-        """Send message to a group"""
-        try:
-            await self.client.send_message(chat_id, text)
-            return True
-        except Exception as e:
-            logger.error(f"Error sending message: {e}")
-            return False
 
     async def check_health(self) -> Dict:
         """Check userbot health status"""
